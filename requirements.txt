@@ -1,0 +1,11 @@
+fast-flights
+
+# fast-flights 3.1.0 imports typing_extensions but does not declare it as a
+# dependency, so pip will not pull it in on its own. Without this line the
+# workflow fails at import. Remove it once upstream fixes its metadata.
+typing_extensions
+
+# ZoneInfo has no time zone database of its own on Windows, so the Pacific
+# timestamps on the dashboard need this when you run track.py locally.
+# On the Linux runners it is a no-op; they already have a system tzdb.
+tzdata

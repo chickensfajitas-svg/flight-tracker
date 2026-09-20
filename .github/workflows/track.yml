@@ -1,0 +1,44 @@
+name: Track flight prices
+
+on:
+  schedule:
+    # Times are UTC. Cron does not follow daylight saving, so the Pacific
+    # equivalent shifts by an hour twice a year.
+    - cron: "0 14 * * *"   # 6:00 AM PST  / 7:00 AM PDT
+    - cron: "0 20 * * *"   # 12:00 PM PST / 1:00 PM PDT
+    - cron: "0 2 * * *"    # 6:00 PM PST  / 7:00 PM PDT (previous day)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never let two runs race the same commit.
+concurrency:
+  group: track-flight-prices
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check prices
+        run: python track.py
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add history.csv dashboard.html
+          git diff --staged --quiet || git commit -m "Update flight prices [skip ci]"
+          git push
