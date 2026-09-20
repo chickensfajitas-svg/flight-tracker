@@ -1,8 +1,8 @@
-"""Alaska Airlines nonstop fare tracker.
+"""Alaska Airlines nonstop round-trip fare tracker.
 
-Checks a handful of one-way routes, appends every fare it sees to history.csv,
-and rebuilds dashboard.html from that history. No API keys, no database,
-no notifications.
+Checks each trip twice, once unfiltered and once with basic economy excluded,
+appends every fare it sees to history.csv, and rebuilds dashboard.html from
+that history. No API keys, no database, no notifications.
 """
 
 from __future__ import annotations
@@ -17,48 +17,49 @@ from zoneinfo import ZoneInfo
 from fast_flights import FlightQuery, Passengers, create_query, get_flights
 from fast_flights.exceptions import FlightsNotFound
 
-# ---------------------------------------------------------------------------
-# Config. Edit these.
-# ---------------------------------------------------------------------------
+# Change airports, dates or the airline here. One line per trip. Nothing else
+# in this file needs touching.
 
-# (origin, destination, departure date as YYYY-MM-DD)
-ROUTES = [
-    ("BUR", "SEA", "2026-11-06"),
-    ("BUR", "SEA", "2026-11-07"),
-    ("LAX", "SEA", "2026-11-06"),
-    ("LAX", "SEA", "2026-11-07"),
-]
+# ---- EDIT THIS ----
+AIRLINE   = "AS"     # IATA code, or "" for all airlines
+MAX_STOPS = 0        # 0 = nonstop only, None = allow connections
+ADULTS    = 1
+TRIPS = [
+    ("BUR", "SEA", "2026-11-06", "2026-11-07"),
+    ("LAX", "SEA", "2026-11-06", "2026-11-07"),
+]   # (home airport, destination, depart date, return date)
+# ---- END EDIT ----
 
-AIRLINES = ["AS"]   # IATA codes. Filters at the source, not after the fact.
-MAX_STOPS = 0       # 0 = nonstop only
 SEAT = "economy"
-ADULTS = 1
 CURRENCY = "USD"
 LANGUAGE = "en-US"
 
 HISTORY_CSV = "history.csv"
 DASHBOARD_HTML = "dashboard.html"
 
-# ---------------------------------------------------------------------------
+NL = chr(10)
 
 CSV_HEADER = [
     "checked_at",
     "origin",
     "destination",
     "depart_date",
-    "depart_time",
-    "arrive_time",
-    "duration_min",
-    "price",
+    "return_date",
+    "days_out",
+    "fare_brand",
+    "outbound_time",
+    "total_price",
 ]
+
+# "any" is the cheapest fare of any brand. "main" excludes basic economy.
+BRANDS = [("any", False), ("main", True)]
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 # ---------------------------------------------------------------------------
 # Time helpers
 # ---------------------------------------------------------------------------
-
-PACIFIC = ZoneInfo("America/Los_Angeles")
-
 
 def to_pacific(moment):
     """Aware UTC datetime -> (Pacific datetime, 'PST'/'PDT')."""
@@ -81,7 +82,15 @@ def parse_iso(value):
         return None
 
 
-def pacific_stamp(iso_utc, with_year=True):
+def parse_day(value):
+    """'2026-11-06' -> date, or None."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def pacific_stamp(iso_utc):
     """A quiet, human date: 'Sep 20, 2026 at 11:03 AM PDT'."""
     moment = parse_iso(iso_utc)
     if moment is None:
@@ -89,9 +98,8 @@ def pacific_stamp(iso_utc, with_year=True):
     local, label = to_pacific(moment)
     hour = local.hour % 12 or 12
     meridiem = "AM" if local.hour < 12 else "PM"
-    year = f", {local.year}" if with_year else ""
     return (
-        f"{local.strftime('%b')} {local.day}{year} at "
+        f"{local.strftime('%b')} {local.day}, {local.year} at "
         f"{hour}:{local.minute:02d} {meridiem} {label}"
     )
 
@@ -131,25 +139,19 @@ def to_12h(value):
     return f"{hour % 12 or 12}:{minute:02d} {meridiem}"
 
 
-def format_duration(minutes):
-    """140 -> '2h 20m'."""
-    try:
-        total = int(minutes)
-    except (TypeError, ValueError):
-        return "--"
-    if total <= 0:
-        return "--"
-    hours, rest = divmod(total, 60)
-    return f"{hours}h {rest:02d}m" if hours else f"{rest}m"
-
-
-def format_route_date(value):
-    """'2026-11-06' -> 'Fri, Nov 6, 2026'."""
-    try:
-        day = datetime.strptime(value, "%Y-%m-%d")
-    except (TypeError, ValueError):
+def short_day(value):
+    """'2026-11-06' -> 'Nov 6'."""
+    day = parse_day(value)
+    if day is None:
         return str(value)
-    return f"{day.strftime('%a')}, {day.strftime('%b')} {day.day}, {day.year}"
+    return f"{day.strftime('%b')} {day.day}"
+
+
+def trip_dates(depart_date, return_date):
+    """'Nov 6 to Nov 7, 2026'."""
+    depart = parse_day(depart_date)
+    out = f"{short_day(depart_date)} to {short_day(return_date)}"
+    return f"{out}, {depart.year}" if depart else out
 
 
 def to_int(value):
@@ -159,36 +161,51 @@ def to_int(value):
         return None
 
 
+def money(value):
+    return f"${value:,}"
+
+
 # ---------------------------------------------------------------------------
 # Fetching
 # ---------------------------------------------------------------------------
 
-def fetch_route(origin, destination, date):
-    """Return (itineraries, unpriced_skipped, connecting_skipped).
+def fetch_trip(origin, destination, depart_date, return_date, exclude_basic):
+    """One round-trip query.
 
-    Raises on anything that goes wrong; the caller decides what that means.
+    Returns (fares, unpriced, unexpected_shape) where `fares` maps an outbound
+    departure "HH:MM" to the cheapest total round-trip price leaving at that
+    time. Raises on anything that goes wrong; the caller decides what to do.
     """
+    airlines = [AIRLINE] if AIRLINE else None
     query = create_query(
         flights=[
             FlightQuery(
-                date=date,
+                date=depart_date,
                 from_airport=origin,
                 to_airport=destination,
-                airlines=AIRLINES,
+                airlines=airlines,
                 max_stops=MAX_STOPS,
-            )
+            ),
+            FlightQuery(
+                date=return_date,
+                from_airport=destination,
+                to_airport=origin,
+                airlines=airlines,
+                max_stops=MAX_STOPS,
+            ),
         ],
-        trip="one-way",
+        trip="round-trip",
         seat=SEAT,
         passengers=Passengers(adults=ADULTS),
         currency=CURRENCY,
         language=LANGUAGE,
+        exclude_basic_economy=exclude_basic,
     )
     results = get_flights(query)
 
-    itineraries = []
+    fares = {}
     unpriced = 0
-    connecting = 0
+    unexpected = 0
 
     for result in results:
         price = result.price
@@ -198,28 +215,21 @@ def fetch_route(origin, destination, date):
             unpriced += 1
             continue
 
+        # A round-trip result carries the outbound journey only; the return is
+        # not in the response. With MAX_STOPS=None that journey can be several
+        # segments, and the first one always begins it, so read the departure
+        # from there rather than assuming a single nonstop leg.
         segments = list(result.flights or ())
-        if len(segments) != 1:
-            # max_stops=0 should make this impossible. If Google ignores the
-            # filter, refuse to record a connection as though it were nonstop.
-            connecting += 1
+        if not segments:
+            unexpected += 1
             continue
 
-        leg = segments[0]
-        duration = leg.duration
-        if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
-            duration = ""
+        departs = hhmm(segments[0].departure.time)
+        # Several return pairings can share an outbound. Keep the cheapest.
+        if departs not in fares or price < fares[departs]:
+            fares[departs] = price
 
-        itineraries.append(
-            {
-                "depart_time": hhmm(leg.departure.time),
-                "arrive_time": hhmm(leg.arrival.time),
-                "duration_min": duration,
-                "price": price,
-            }
-        )
-
-    return itineraries, unpriced, connecting
+    return fares, unpriced, unexpected
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +242,7 @@ def append_history(rows):
     with open(HISTORY_CSV, "a", newline="", encoding="utf-8") as handle:
         # csv defaults to CRLF. Pin it to LF so the file reads the same
         # whether a run happened here or on the Linux runner.
-        writer = csv.writer(handle, lineterminator=chr(10))
+        writer = csv.writer(handle, lineterminator=NL)
         if not has_content:
             writer.writerow(CSV_HEADER)
         writer.writerows(rows)
@@ -246,10 +256,11 @@ def read_history():
     rows = []
     with open(HISTORY_CSV, newline="", encoding="utf-8") as handle:
         for raw in csv.DictReader(handle):
-            price = to_int(raw.get("price"))
+            price = to_int(raw.get("total_price"))
+            brand = (raw.get("fare_brand") or "").strip()
             if price is None or price <= 0:
                 continue
-            if not raw.get("checked_at"):
+            if not raw.get("checked_at") or brand not in ("any", "main"):
                 continue
             rows.append(
                 {
@@ -257,10 +268,11 @@ def read_history():
                     "origin": raw.get("origin", ""),
                     "destination": raw.get("destination", ""),
                     "depart_date": raw.get("depart_date", ""),
-                    "depart_time": raw.get("depart_time", ""),
-                    "arrive_time": raw.get("arrive_time", ""),
-                    "duration_min": raw.get("duration_min", ""),
-                    "price": price,
+                    "return_date": raw.get("return_date", ""),
+                    "days_out": to_int(raw.get("days_out")),
+                    "fare_brand": brand,
+                    "outbound_time": raw.get("outbound_time", ""),
+                    "total_price": price,
                 }
             )
     return rows
@@ -271,19 +283,31 @@ def read_history():
 # ---------------------------------------------------------------------------
 
 CHART_W = 560
-CHART_H = 170
+CHART_H = 175
 PAD_L = 58
 PAD_R = 14
 PAD_T = 16
 PAD_B = 34
 
+# Line style carries the brand as well as colour, so the chart still reads
+# when printed, or to anyone who cannot separate the two hues.
+BRAND_STYLE = {
+    "any": ("Cheapest", "s-any", ""),
+    "main": ("Main cabin", "s-main", "6 4"),
+}
 
-def build_chart(points):
-    """Inline SVG line chart. `points` is [(checked_at, cheapest_price), ...]."""
-    if not points:
+
+def build_chart(slots, series):
+    """Inline SVG line chart.
+
+    `slots` is the shared x axis: checked_at strings, oldest first. `series` is
+    [(brand, {slot_index: price}), ...]. Brands are drawn with their own colour
+    and dash pattern.
+    """
+    prices = [p for _, points in series for p in points.values()]
+    if not prices:
         return '<p class="muted">No price history yet.</p>'
 
-    prices = [price for _, price in points]
     low, high = min(prices), max(prices)
     left, right = PAD_L, CHART_W - PAD_R
     top, bottom = PAD_T, CHART_H - PAD_B
@@ -292,11 +316,11 @@ def build_chart(points):
     middle = top + span_y / 2
 
     flat = high == low
-    count = len(points)
+    count = len(slots)
 
     def x_at(index):
-        # A single point has no span to divide by; put it in the middle.
-        if count == 1:
+        # A single slot has no span to divide by; put it in the middle.
+        if count < 2:
             return left + span_x / 2
         return left + span_x * index / (count - 1)
 
@@ -306,109 +330,167 @@ def build_chart(points):
             return middle
         return bottom - span_y * (price - low) / (high - low)
 
-    coords = [(x_at(i), y_at(price)) for i, (_, price) in enumerate(points)]
-    dots = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" class="dot" />' for x, y in coords
-    )
-    line = ""
-    if count > 1:
-        path = " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
-        line = f'<polyline points="{path}" class="line" />'
+    drawn = ""
+    for brand, points in series:
+        if not points:
+            continue
+        _, cls, dash = BRAND_STYLE.get(brand, (brand, "s-any", ""))
+        coords = [(x_at(i), y_at(points[i])) for i in sorted(points)]
+        if len(coords) > 1:
+            path = " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+            drawn += f'<polyline points="{path}" class="line {cls}"{dash_attr} />'
+        for x, y in coords:
+            drawn += f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" class="dot {cls}" />'
 
     # Both ends of the y axis get a dollar label, even when they are equal.
-    y_labels = (
-        f'<text x="{left - 8}" y="{top + 4}" class="axis end">${high:,}</text>'
-        f'<text x="{left - 8}" y="{bottom + 4}" class="axis end">${low:,}</text>'
+    labels = (
+        f'<text x="{left - 8}" y="{top + 4}" class="axis end">{money(high)}</text>'
+        f'<text x="{left - 8}" y="{bottom + 4}" class="axis end">{money(low)}</text>'
     )
-
-    first_label = html.escape(pacific_short(points[0][0]))
-    last_label = html.escape(pacific_short(points[-1][0]))
-    if count == 1:
-        x_labels = (
+    first = html.escape(pacific_short(slots[0]))
+    last = html.escape(pacific_short(slots[-1]))
+    if count < 2:
+        labels += (
             f'<text x="{x_at(0):.1f}" y="{CHART_H - 12}" class="axis mid">'
-            f"{first_label}</text>"
+            f"{first}</text>"
         )
     else:
-        x_labels = (
-            f'<text x="{left}" y="{CHART_H - 12}" class="axis">{first_label}</text>'
-            f'<text x="{right}" y="{CHART_H - 12}" class="axis end">{last_label}</text>'
+        labels += (
+            f'<text x="{left}" y="{CHART_H - 12}" class="axis">{first}</text>'
+            f'<text x="{right}" y="{CHART_H - 12}" class="axis end">{last}</text>'
         )
 
     return (
         f'<svg class="chart" viewBox="0 0 {CHART_W} {CHART_H}" role="img" '
-        f'aria-label="Cheapest fare over time, ${low:,} to ${high:,}">'
+        f'aria-label="Total round-trip price over time, {money(low)} to {money(high)}">'
         f'<line x1="{left}" y1="{top}" x2="{right}" y2="{top}" class="grid" />'
         f'<line x1="{left}" y1="{bottom}" x2="{right}" y2="{bottom}" class="grid" />'
-        f"{line}{dots}{y_labels}{x_labels}"
+        f"{drawn}{labels}"
         "</svg>"
     )
 
 
-NL = chr(10)
+def build_legend():
+    """Swatches that repeat the line style, not just the colour."""
+    parts = []
+    for brand, _ in BRANDS:
+        label, cls, dash = BRAND_STYLE[brand]
+        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+        parts.append(
+            '<span class="key">'
+            f'<svg viewBox="0 0 28 10" class="swatch" aria-hidden="true">'
+            f'<line x1="1" y1="5" x2="27" y2="5" class="line {cls}"{dash_attr} />'
+            "</svg>"
+            f"{html.escape(label)}</span>"
+        )
+    return '<p class="legend">' + "".join(parts) + "</p>"
 
 
-def build_card(origin, destination, depart_date, rows):
-    """One route/date card: the latest flight table plus a price chart.
-
-    Each element goes on its own line so a single fare change shows up as a
-    one-line diff rather than rewriting the whole file.
-    """
-    title = html.escape(f"{origin} to {destination}")
-    subtitle = html.escape(format_route_date(depart_date))
-
+def build_card(origin, destination, depart_date, return_date, rows):
+    """One trip card: the latest check as a table, plus price history."""
+    sub = html.escape(
+        f"{trip_dates(depart_date, return_date)} - round trip - "
+        f"{'Alaska' if AIRLINE == 'AS' else (AIRLINE or 'any airline')} - "
+        f"{'nonstop' if MAX_STOPS == 0 else 'connections allowed'}"
+    )
     head = [
         '<section class="card">',
-        f"<h2>{title}</h2>",
-        f'<p class="sub">{subtitle}</p>',
+        f'<h2>{origin} <span class="arrows">&#8596;</span> {destination}</h2>',
+        f'<p class="sub">{sub}</p>',
     ]
 
     if not rows:
-        parts = head + [
-            '<p class="muted">No fares recorded for this route yet.</p>',
-            "</section>",
-        ]
-        return NL + NL.join(parts) + NL
+        return NL + NL.join(
+            head
+            + [
+                '<p class="muted">No fares recorded for this trip yet.</p>',
+                "</section>",
+            ]
+        ) + NL
 
     latest_stamp = max(row["checked_at"] for row in rows)
-    latest = sorted(
-        (row for row in rows if row["checked_at"] == latest_stamp),
-        key=lambda row: row["depart_time"],
-    )
-    cheapest = min(row["price"] for row in latest)
+    latest = [row for row in rows if row["checked_at"] == latest_stamp]
+
+    # Cheapest price per departure time, per brand, at the latest check.
+    by_brand = {}
+    for row in latest:
+        slot = by_brand.setdefault(row["fare_brand"], {})
+        time = row["outbound_time"]
+        if time not in slot or row["total_price"] < slot[time]:
+            slot[time] = row["total_price"]
+
+    cheap = by_brand.get("any", {})
+    main = by_brand.get("main", {})
+
+    body = ""
+    # Sorted by departure time, not price: the cheapest fare is often the one
+    # that leaves too late to be useful, and that should be visible.
+    for time in sorted(set(cheap) | set(main)):
+        cheap_price = cheap.get(time)
+        main_price = main.get(time)
+        if cheap_price is None:
+            cheap_cell = '<span class="muted">--</span>'
+        else:
+            cheap_cell = money(cheap_price)
+        if main_price is None:
+            main_cell = '<span class="muted">no Main fare</span>'
+            extra_cell = '<span class="muted">--</span>'
+        else:
+            main_cell = money(main_price)
+            # Identical brands means no cheap inventory left, which is $0
+            # of premium, not a missing number.
+            extra_cell = (
+                money(main_price - cheap_price)
+                if cheap_price is not None
+                else '<span class="muted">--</span>'
+            )
+        body += (
+            f"{NL}<tr><td>{html.escape(to_12h(time))}</td>"
+            f"<td class='price'>{cheap_cell}</td>"
+            f"<td class='price'>{main_cell}</td>"
+            f"<td class='price'>{extra_cell}</td></tr>"
+        )
 
     parts = head + [
         "<table><thead><tr>",
-        "<th>Departs</th><th>Arrives</th><th>Duration</th><th>Price</th>",
+        "<th>Departure</th><th>Cheapest</th><th>Main cabin</th>"
+        "<th>Extra to pick a seat</th>",
         "</tr></thead><tbody>",
+        body.lstrip(NL),
+        "</tbody></table>",
     ]
 
-    for row in latest:
-        best = row["price"] == cheapest
-        cls = ' class="best"' if best else ""
-        tag = ' <span class="tag">cheapest</span>' if best else ""
+    if not main:
         parts.append(
-            f"<tr{cls}>"
-            f'<td>{html.escape(to_12h(row["depart_time"]))}</td>'
-            f'<td>{html.escape(to_12h(row["arrive_time"]))}</td>'
-            f'<td>{html.escape(format_duration(row["duration_min"]))}</td>'
-            f'<td class="price">${row["price"]:,}{tag}</td>'
-            "</tr>"
+            '<p class="muted">No Main cabin fare was recorded at the last '
+            "check. That can mean none was offered, or that the check did "
+            "not finish.</p>"
         )
 
-    # Cheapest fare per check, oldest first.
-    by_check = {}
-    for row in rows:
-        stamp = row["checked_at"]
-        if stamp not in by_check or row["price"] < by_check[stamp]:
-            by_check[stamp] = row["price"]
-    points = sorted(by_check.items())
+    parts.append(
+        f'<p class="sub">Checked {html.escape(pacific_stamp(latest_stamp))}. '
+        "Departure times are local to the departure airport.</p>"
+    )
+
+    # Shared x axis across both brands, oldest first.
+    slots = sorted({row["checked_at"] for row in rows})
+    index = {stamp: i for i, stamp in enumerate(slots)}
+    series = []
+    for brand, _ in BRANDS:
+        points = {}
+        for row in rows:
+            if row["fare_brand"] != brand:
+                continue
+            i = index[row["checked_at"]]
+            if i not in points or row["total_price"] < points[i]:
+                points[i] = row["total_price"]
+        series.append((brand, points))
 
     parts += [
-        "</tbody></table>",
-        f'<p class="sub">Checked {html.escape(pacific_stamp(latest_stamp))}. '
-        "Times are local to each airport.</p>",
-        "<h3>Cheapest fare over time</h3>",
-        build_chart(points),
+        "<h3>Cheapest total over time</h3>",
+        build_chart(slots, series),
+        build_legend(),
         "</section>",
     ]
     return NL + NL.join(parts) + NL
@@ -422,8 +504,8 @@ PAGE_CSS = """
   --ink: #1d1d1b;
   --muted: #62625e;
   --rule: #e2e2dd;
-  --best: #f1f6ed;
-  --accent: #3f6f3f;
+  --c1: #2f6f4f;
+  --c2: #5a53c0;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -432,8 +514,8 @@ PAGE_CSS = """
     --ink: #e9e9e6;
     --muted: #9a9a95;
     --rule: #34363a;
-    --best: #22301e;
-    --accent: #8fbf80;
+    --c1: #74c49a;
+    --c2: #a49cf0;
   }
 }
 * { box-sizing: border-box; }
@@ -452,8 +534,10 @@ h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 4px; }
 h2 { font-size: 1.1rem; font-weight: 600; margin: 0; }
 h3 { font-size: .8rem; font-weight: 600; margin: 22px 0 6px;
      color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.arrows { color: var(--muted); font-weight: 400; }
 .sub, .muted { color: var(--muted); font-size: .85rem; margin: 2px 0 0; }
-.updated { margin: 0 0 24px; }
+.lede { margin: 0 0 6px; }
+.intro { margin: 0 0 22px; }
 .card {
   background: var(--card);
   border: 1px solid var(--rule);
@@ -463,32 +547,56 @@ h3 { font-size: .8rem; font-weight: 600; margin: 22px 0 6px;
 }
 table { width: 100%; border-collapse: collapse; margin: 14px 0 10px; }
 th, td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--rule); }
-th { font-size: .7rem; font-weight: 600; text-transform: uppercase;
-     letter-spacing: .04em; color: var(--muted); }
-th:last-child, td:last-child { text-align: right; }
+th { font-size: .68rem; font-weight: 600; text-transform: uppercase;
+     letter-spacing: .03em; color: var(--muted); vertical-align: bottom; }
+th:not(:first-child), td:not(:first-child) { text-align: right; }
 td { font-size: .95rem; }
 tbody tr:last-child td { border-bottom: none; }
-tr.best td { background: var(--best); }
 .price { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tag {
-  display: inline-block; margin-left: 6px; padding: 1px 6px;
-  border-radius: 999px; background: var(--accent); color: var(--card);
-  font-size: .6rem; text-transform: uppercase; letter-spacing: .04em;
-  vertical-align: 1px;
-}
 .chart { width: 100%; height: auto; display: block; }
-.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; }
-.chart .dot { fill: var(--accent); }
+.chart .line, .swatch .line { fill: none; stroke-width: 2; }
+.s-any { stroke: var(--c1); }
+.s-main { stroke: var(--c2); }
+circle.s-any { fill: var(--c1); stroke: none; }
+circle.s-main { fill: var(--c2); stroke: none; }
 .chart .grid { stroke: var(--rule); stroke-width: 1; }
 .chart .axis { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .chart .end { text-anchor: end; }
 .chart .mid { text-anchor: middle; }
+.legend { margin: 6px 0 0; font-size: .78rem; color: var(--muted); }
+.key { display: inline-flex; align-items: center; margin-right: 14px; }
+.swatch { width: 28px; height: 10px; margin-right: 6px; flex: none; }
 .note { color: var(--muted); font-size: .8rem; margin-top: 28px; }
 @media (max-width: 420px) {
   td, th { padding: 8px 2px; }
-  td { font-size: .9rem; }
+  td { font-size: .88rem; }
+  th { font-size: .62rem; }
 }
 """
+
+
+def days_out_phrase(history):
+    """'47 days until departure', from the most recent check."""
+    if not history:
+        return ""
+    newest = max(row["checked_at"] for row in history)
+    values = sorted(
+        {
+            row["days_out"]
+            for row in history
+            if row["checked_at"] == newest and row["days_out"] is not None
+        }
+    )
+    if not values:
+        return ""
+    if len(values) == 1:
+        count = values[0]
+        if count < 0:
+            return "Departure date has passed."
+        if count == 0:
+            return "Departing today."
+        return f"{count} day{'s' if count != 1 else ''} until departure."
+    return f"{values[0]} to {values[-1]} days until departure."
 
 
 def render_page(history):
@@ -504,44 +612,62 @@ def render_page(history):
 
     groups = {}
     for row in history:
-        key = (row["origin"], row["destination"], row["depart_date"])
+        key = (
+            row["origin"],
+            row["destination"],
+            row["depart_date"],
+            row["return_date"],
+        )
         groups.setdefault(key, []).append(row)
 
     body = ""
     seen = set()
-    # Configured routes first, in the order they appear in ROUTES.
-    for origin, destination, depart_date in ROUTES:
-        key = (origin, destination, depart_date)
+    # Configured trips first, in the order they appear in TRIPS.
+    for origin, destination, depart_date, return_date in TRIPS:
+        key = (origin, destination, depart_date, return_date)
         if key in seen:
             continue
         seen.add(key)
-        body += build_card(origin, destination, depart_date, groups.get(key, []))
+        body += build_card(
+            origin, destination, depart_date, return_date, groups.get(key, [])
+        )
     # Then anything still in the history that is no longer configured.
     for key in sorted(groups):
         if key not in seen:
-            body += build_card(key[0], key[1], key[2], groups[key])
+            body += build_card(key[0], key[1], key[2], key[3], groups[key])
+
+    days = days_out_phrase(history)
+    days_line = f'<p class="sub lede">{html.escape(days)}</p>' if days else ""
 
     return (
-        "<!doctype html>\n"
-        '<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        "<title>Flight prices</title>\n"
-        f"<style>{PAGE_CSS}</style>\n"
-        "</head>\n<body>\n"
-        '<div class="wrap">\n'
-        "<h1>Flight prices</h1>\n"
-        f'<p class="sub updated">{updated}</p>\n'
-        f"{body}\n"
-        '<p class="note">One adult, one way, economy, nonstop on Alaska '
-        "Airlines. Base fare only, before bags or seat selection. Departure "
-        "and arrival times are local to each airport.</p>\n"
-        "</div>\n</body>\n</html>\n"
+        "<!doctype html>"
+        f'{NL}<html lang="en">{NL}<head>{NL}<meta charset="utf-8">{NL}'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"{NL}<title>Flight prices</title>{NL}"
+        f"<style>{PAGE_CSS}</style>{NL}"
+        f"</head>{NL}<body>{NL}"
+        f'<div class="wrap">{NL}'
+        f"<h1>Flight prices</h1>{NL}"
+        f"{days_line}{NL}"
+        f'<p class="sub">{updated}</p>{NL}'
+        '<p class="sub intro">Every price is the <strong>total round trip for '
+        "one adult</strong>, not one leg and not per person beyond the first. "
+        "The return time is chosen when you book: the search prices the "
+        "cheapest available pairing rather than a fixed return flight, so only "
+        f"the outbound departure is listed.</p>{NL}"
+        f"{body}{NL}"
+        '<p class="note">Base fare only, before bags or seat selection. The '
+        "cheaper fare is Alaska's Saver basic economy, where your seat is "
+        "assigned at check-in and you board last; the extra buys a seat you "
+        "pick yourself and more room to change your mind. Checked and carry-on "
+        f"bag allowance is the same either way.</p>{NL}"
+        f"</div>{NL}</body>{NL}</html>{NL}"
     )
 
 
 def write_dashboard():
     history = read_history()
-    with open(DASHBOARD_HTML, "w", encoding="utf-8", newline="\n") as handle:
+    with open(DASHBOARD_HTML, "w", encoding="utf-8", newline=NL) as handle:
         handle.write(render_page(history))
     return len(history)
 
@@ -552,92 +678,126 @@ def write_dashboard():
 
 def main():
     # Once every tracked date has passed there is nothing left to price. Say so
-    # and stop cleanly, rather than failing every run until ROUTES is edited.
+    # and stop cleanly, rather than failing every run until TRIPS is edited.
     today = pacific_today()
-    upcoming = []
-    for route in ROUTES:
-        try:
-            day = datetime.strptime(route[2], "%Y-%m-%d").date()
-        except (TypeError, ValueError, IndexError):
-            # A date we cannot read is not a date in the past. Let the fetch
-            # try it and report whatever goes wrong.
-            upcoming.append(route)
-            continue
-        if day >= today:
-            upcoming.append(route)
+    live = []
+    for trip in TRIPS:
+        days = [parse_day(trip[2]), parse_day(trip[3])]
+        # A date we cannot read is not a date in the past.
+        if any(day is None or day >= today for day in days):
+            live.append(trip)
 
-    if ROUTES and not upcoming:
+    if TRIPS and not live:
         print(
             "All tracked dates are in the past. Nothing to check. "
-            "Edit ROUTES in track.py to track new dates."
+            "Edit TRIPS in track.py to track new dates."
         )
         return 0
 
     checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    print(f"Checking {len(ROUTES)} route(s) at {checked_at}\n")
+    planned = len(TRIPS) * len(BRANDS)
+    print(f"Checking {len(TRIPS)} trip(s), {planned} queries, at {checked_at}")
 
     rows = []
     productive = 0
+    failures = []
 
-    for origin, destination, depart_date in ROUTES:
-        label = f"{origin} -> {destination} on {depart_date}"
-        try:
-            itineraries, unpriced, connecting = fetch_route(
-                origin, destination, depart_date
-            )
-        except FlightsNotFound as exc:
-            print(f"{label}: no flights found -- FlightsNotFound: {exc}")
-            continue
-        except Exception as exc:
-            print(f"{label}: failed -- {type(exc).__name__}: {exc}")
-            continue
+    for origin, destination, depart_date, return_date in TRIPS:
+        depart = parse_day(depart_date)
+        days_out = (depart - today).days if depart else ""
+        print()
+        print(
+            f"{origin} <-> {destination}  {depart_date} / {return_date}"
+            f"  ({days_out} days out)"
+        )
 
-        notes = []
-        if unpriced:
-            notes.append(f"{unpriced} unpriced skipped")
-        if connecting:
-            notes.append(f"{connecting} connecting skipped")
-        suffix = f"  ({', '.join(notes)})" if notes else ""
+        found = {}
+        for brand, exclude in BRANDS:
+            tag = f"  {brand:<4}"
+            try:
+                fares, unpriced, unexpected = fetch_trip(
+                    origin, destination, depart_date, return_date, exclude
+                )
+            except FlightsNotFound as exc:
+                failures.append(f"{origin}-{destination} {brand}")
+                print(
+                    f"{tag}  FAILED  FlightsNotFound: {exc}", file=sys.stderr
+                )
+                continue
+            except Exception as exc:
+                failures.append(f"{origin}-{destination} {brand}")
+                print(
+                    f"{tag}  FAILED  {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
 
-        if not itineraries:
-            print(f"{label}: nothing usable returned{suffix}")
-            continue
+            notes = []
+            if unpriced:
+                notes.append(f"{unpriced} unpriced skipped")
+            if unexpected:
+                notes.append(f"{unexpected} unexpected shape skipped")
+            suffix = f"  ({', '.join(notes)})" if notes else ""
 
-        productive += 1
-        cheapest = min(item["price"] for item in itineraries)
-        print(f"{label}: {len(itineraries)} fare(s), cheapest ${cheapest:,}{suffix}")
-        for item in sorted(itineraries, key=lambda i: i["depart_time"]):
+            if not fares:
+                print(f"{tag}  empty   no fares returned{suffix}")
+                continue
+
+            productive += 1
+            found[brand] = fares
             print(
-                f"    {to_12h(item['depart_time']):>8} -> "
-                f"{to_12h(item['arrive_time']):>8}  "
-                f"{format_duration(item['duration_min']):>7}  "
-                f"${item['price']:,}"
+                f"{tag}  ok      {len(fares)} fare(s), "
+                f"cheapest {money(min(fares.values()))}{suffix}"
             )
-            rows.append(
-                [
-                    checked_at,
-                    origin,
-                    destination,
-                    depart_date,
-                    item["depart_time"],
-                    item["arrive_time"],
-                    item["duration_min"],
-                    item["price"],
-                ]
-            )
+            for time in sorted(fares):
+                rows.append(
+                    [
+                        checked_at,
+                        origin,
+                        destination,
+                        depart_date,
+                        return_date,
+                        days_out,
+                        brand,
+                        time,
+                        fares[time],
+                    ]
+                )
+
+        cheap = found.get("any", {})
+        main_fares = found.get("main", {})
+        if cheap or main_fares:
+            print(f"    {'departs':<10}{'cheapest':>10}{'main':>10}{'extra':>10}")
+            for time in sorted(set(cheap) | set(main_fares)):
+                a = cheap.get(time)
+                m = main_fares.get(time)
+                extra = money(m - a) if (a is not None and m is not None) else "--"
+                print(
+                    f"    {to_12h(time):<10}{money(a) if a else '--':>10}"
+                    f"{money(m) if m else 'none':>10}{extra:>10}"
+                )
 
     if productive == 0:
         print(
-            f"\nNo route produced a fare. Leaving {HISTORY_CSV} and "
-            f"{DASHBOARD_HTML} untouched.",
+            f"{NL}All {planned} queries failed to produce a fare. Leaving "
+            f"{HISTORY_CSV} and {DASHBOARD_HTML} untouched.",
             file=sys.stderr,
         )
         return 1
 
     append_history(rows)
     total = write_dashboard()
+    if failures:
+        # Partial success still exits 0, but the run must not look clean.
+        print(
+            f"WARNING: {len(failures)} of {planned} queries failed "
+            f"({', '.join(failures)}). The page cannot tell a fare that was "
+            "not offered from one that was never checked.",
+            file=sys.stderr,
+        )
     print(
-        f"\nWrote {len(rows)} row(s) to {HISTORY_CSV} ({total} total). "
+        f"{NL}{productive} of {planned} queries produced fares. "
+        f"Wrote {len(rows)} row(s) to {HISTORY_CSV} ({total} total). "
         f"Rebuilt {DASHBOARD_HTML}."
     )
     return 0

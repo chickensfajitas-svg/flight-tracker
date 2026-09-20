@@ -12,8 +12,8 @@
   --ink: #1d1d1b;
   --muted: #62625e;
   --rule: #e2e2dd;
-  --best: #f1f6ed;
-  --accent: #3f6f3f;
+  --c1: #2f6f4f;
+  --c2: #5a53c0;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -22,8 +22,8 @@
     --ink: #e9e9e6;
     --muted: #9a9a95;
     --rule: #34363a;
-    --best: #22301e;
-    --accent: #8fbf80;
+    --c1: #74c49a;
+    --c2: #a49cf0;
   }
 }
 * { box-sizing: border-box; }
@@ -42,8 +42,10 @@ h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 4px; }
 h2 { font-size: 1.1rem; font-weight: 600; margin: 0; }
 h3 { font-size: .8rem; font-weight: 600; margin: 22px 0 6px;
      color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.arrows { color: var(--muted); font-weight: 400; }
 .sub, .muted { color: var(--muted); font-size: .85rem; margin: 2px 0 0; }
-.updated { margin: 0 0 24px; }
+.lede { margin: 0 0 6px; }
+.intro { margin: 0 0 22px; }
 .card {
   background: var(--card);
   border: 1px solid var(--rule);
@@ -53,109 +55,79 @@ h3 { font-size: .8rem; font-weight: 600; margin: 22px 0 6px;
 }
 table { width: 100%; border-collapse: collapse; margin: 14px 0 10px; }
 th, td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--rule); }
-th { font-size: .7rem; font-weight: 600; text-transform: uppercase;
-     letter-spacing: .04em; color: var(--muted); }
-th:last-child, td:last-child { text-align: right; }
+th { font-size: .68rem; font-weight: 600; text-transform: uppercase;
+     letter-spacing: .03em; color: var(--muted); vertical-align: bottom; }
+th:not(:first-child), td:not(:first-child) { text-align: right; }
 td { font-size: .95rem; }
 tbody tr:last-child td { border-bottom: none; }
-tr.best td { background: var(--best); }
 .price { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tag {
-  display: inline-block; margin-left: 6px; padding: 1px 6px;
-  border-radius: 999px; background: var(--accent); color: var(--card);
-  font-size: .6rem; text-transform: uppercase; letter-spacing: .04em;
-  vertical-align: 1px;
-}
 .chart { width: 100%; height: auto; display: block; }
-.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; }
-.chart .dot { fill: var(--accent); }
+.chart .line, .swatch .line { fill: none; stroke-width: 2; }
+.s-any { stroke: var(--c1); }
+.s-main { stroke: var(--c2); }
+circle.s-any { fill: var(--c1); stroke: none; }
+circle.s-main { fill: var(--c2); stroke: none; }
 .chart .grid { stroke: var(--rule); stroke-width: 1; }
 .chart .axis { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .chart .end { text-anchor: end; }
 .chart .mid { text-anchor: middle; }
+.legend { margin: 6px 0 0; font-size: .78rem; color: var(--muted); }
+.key { display: inline-flex; align-items: center; margin-right: 14px; }
+.swatch { width: 28px; height: 10px; margin-right: 6px; flex: none; }
 .note { color: var(--muted); font-size: .8rem; margin-top: 28px; }
 @media (max-width: 420px) {
   td, th { padding: 8px 2px; }
-  td { font-size: .9rem; }
+  td { font-size: .88rem; }
+  th { font-size: .62rem; }
 }
 </style>
 </head>
 <body>
 <div class="wrap">
 <h1>Flight prices</h1>
-<p class="sub updated">Last updated Sep 20, 2026 at 2:23 PM PDT.</p>
+<p class="sub lede">47 days until departure.</p>
+<p class="sub">Last updated Sep 20, 2026 at 3:04 PM PDT.</p>
+<p class="sub intro">Every price is the <strong>total round trip for one adult</strong>, not one leg and not per person beyond the first. The return time is chosen when you book: the search prices the cheapest available pairing rather than a fixed return flight, so only the outbound departure is listed.</p>
 
 <section class="card">
-<h2>BUR to SEA</h2>
-<p class="sub">Fri, Nov 6, 2026</p>
+<h2>BUR <span class="arrows">&#8596;</span> SEA</h2>
+<p class="sub">Nov 6 to Nov 7, 2026 - round trip - Alaska - nonstop</p>
 <table><thead><tr>
-<th>Departs</th><th>Arrives</th><th>Duration</th><th>Price</th>
+<th>Departure</th><th>Cheapest</th><th>Main cabin</th><th>Extra to pick a seat</th>
 </tr></thead><tbody>
-<tr class="best"><td>7:03 AM</td><td>9:54 AM</td><td>2h 51m</td><td class="price">$179 <span class="tag">cheapest</span></td></tr>
-<tr><td>10:00 AM</td><td>12:51 PM</td><td>2h 51m</td><td class="price">$219</td></tr>
-<tr class="best"><td>2:32 PM</td><td>5:21 PM</td><td>2h 49m</td><td class="price">$179 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>6:09 PM</td><td>8:56 PM</td><td>2h 47m</td><td class="price">$179 <span class="tag">cheapest</span></td></tr>
+<tr><td>7:03 AM</td><td class='price'>$287</td><td class='price'>$367</td><td class='price'>$80</td></tr>
+<tr><td>10:00 AM</td><td class='price'>$315</td><td class='price'>$395</td><td class='price'>$80</td></tr>
+<tr><td>2:32 PM</td><td class='price'>$287</td><td class='price'>$367</td><td class='price'>$80</td></tr>
+<tr><td>6:09 PM</td><td class='price'>$287</td><td class='price'>$367</td><td class='price'>$80</td></tr>
 </tbody></table>
-<p class="sub">Checked Sep 20, 2026 at 2:23 PM PDT. Times are local to each airport.</p>
-<h3>Cheapest fare over time</h3>
-<svg class="chart" viewBox="0 0 560 170" role="img" aria-label="Cheapest fare over time, $179 to $179"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="136" x2="546" y2="136" class="grid" /><polyline points="58.0,76.0 155.6,76.0 253.2,76.0 350.8,76.0 448.4,76.0 546.0,76.0" class="line" /><circle cx="58.0" cy="76.0" r="3" class="dot" /><circle cx="155.6" cy="76.0" r="3" class="dot" /><circle cx="253.2" cy="76.0" r="3" class="dot" /><circle cx="350.8" cy="76.0" r="3" class="dot" /><circle cx="448.4" cy="76.0" r="3" class="dot" /><circle cx="546.0" cy="76.0" r="3" class="dot" /><text x="50" y="20" class="axis end">$179</text><text x="50" y="140" class="axis end">$179</text><text x="58" y="158" class="axis">Sep 20</text><text x="546" y="158" class="axis end">Sep 20</text></svg>
+<p class="sub">Checked Sep 20, 2026 at 3:04 PM PDT. Departure times are local to the departure airport.</p>
+<h3>Cheapest total over time</h3>
+<svg class="chart" viewBox="0 0 560 175" role="img" aria-label="Total round-trip price over time, $287 to $367"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="141" x2="546" y2="141" class="grid" /><polyline points="58.0,141.0 302.0,141.0 546.0,141.0" class="line s-any" /><circle cx="58.0" cy="141.0" r="3" class="dot s-any" /><circle cx="302.0" cy="141.0" r="3" class="dot s-any" /><circle cx="546.0" cy="141.0" r="3" class="dot s-any" /><polyline points="58.0,16.0 302.0,16.0 546.0,16.0" class="line s-main" stroke-dasharray="6 4" /><circle cx="58.0" cy="16.0" r="3" class="dot s-main" /><circle cx="302.0" cy="16.0" r="3" class="dot s-main" /><circle cx="546.0" cy="16.0" r="3" class="dot s-main" /><text x="50" y="20" class="axis end">$367</text><text x="50" y="145" class="axis end">$287</text><text x="58" y="163" class="axis">Sep 20</text><text x="546" y="163" class="axis end">Sep 20</text></svg>
+<p class="legend"><span class="key"><svg viewBox="0 0 28 10" class="swatch" aria-hidden="true"><line x1="1" y1="5" x2="27" y2="5" class="line s-any" /></svg>Cheapest</span><span class="key"><svg viewBox="0 0 28 10" class="swatch" aria-hidden="true"><line x1="1" y1="5" x2="27" y2="5" class="line s-main" stroke-dasharray="6 4" /></svg>Main cabin</span></p>
 </section>
 
 <section class="card">
-<h2>BUR to SEA</h2>
-<p class="sub">Sat, Nov 7, 2026</p>
+<h2>LAX <span class="arrows">&#8596;</span> SEA</h2>
+<p class="sub">Nov 6 to Nov 7, 2026 - round trip - Alaska - nonstop</p>
 <table><thead><tr>
-<th>Departs</th><th>Arrives</th><th>Duration</th><th>Price</th>
+<th>Departure</th><th>Cheapest</th><th>Main cabin</th><th>Extra to pick a seat</th>
 </tr></thead><tbody>
-<tr class="best"><td>7:03 AM</td><td>9:54 AM</td><td>2h 51m</td><td class="price">$169 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>10:00 AM</td><td>12:51 PM</td><td>2h 51m</td><td class="price">$169 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>2:32 PM</td><td>5:21 PM</td><td>2h 49m</td><td class="price">$169 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>6:09 PM</td><td>8:56 PM</td><td>2h 47m</td><td class="price">$169 <span class="tag">cheapest</span></td></tr>
+<tr><td>8:00 AM</td><td class='price'>$299</td><td class='price'><span class="muted">no Main fare</span></td><td class='price'><span class="muted">--</span></td></tr>
+<tr><td>9:12 AM</td><td class='price'>$324</td><td class='price'>$404</td><td class='price'>$80</td></tr>
+<tr><td>11:20 AM</td><td class='price'>$297</td><td class='price'><span class="muted">no Main fare</span></td><td class='price'><span class="muted">--</span></td></tr>
+<tr><td>12:05 PM</td><td class='price'>$297</td><td class='price'>$377</td><td class='price'>$80</td></tr>
+<tr><td>1:18 PM</td><td class='price'>$306</td><td class='price'>$386</td><td class='price'>$80</td></tr>
+<tr><td>3:03 PM</td><td class='price'>$303</td><td class='price'>$383</td><td class='price'>$80</td></tr>
+<tr><td>7:46 PM</td><td class='price'>$262</td><td class='price'>$342</td><td class='price'>$80</td></tr>
+<tr><td>8:45 PM</td><td class='price'>$262</td><td class='price'>$342</td><td class='price'>$80</td></tr>
 </tbody></table>
-<p class="sub">Checked Sep 20, 2026 at 2:23 PM PDT. Times are local to each airport.</p>
-<h3>Cheapest fare over time</h3>
-<svg class="chart" viewBox="0 0 560 170" role="img" aria-label="Cheapest fare over time, $169 to $169"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="136" x2="546" y2="136" class="grid" /><polyline points="58.0,76.0 155.6,76.0 253.2,76.0 350.8,76.0 448.4,76.0 546.0,76.0" class="line" /><circle cx="58.0" cy="76.0" r="3" class="dot" /><circle cx="155.6" cy="76.0" r="3" class="dot" /><circle cx="253.2" cy="76.0" r="3" class="dot" /><circle cx="350.8" cy="76.0" r="3" class="dot" /><circle cx="448.4" cy="76.0" r="3" class="dot" /><circle cx="546.0" cy="76.0" r="3" class="dot" /><text x="50" y="20" class="axis end">$169</text><text x="50" y="140" class="axis end">$169</text><text x="58" y="158" class="axis">Sep 20</text><text x="546" y="158" class="axis end">Sep 20</text></svg>
+<p class="sub">Checked Sep 20, 2026 at 3:04 PM PDT. Departure times are local to the departure airport.</p>
+<h3>Cheapest total over time</h3>
+<svg class="chart" viewBox="0 0 560 175" role="img" aria-label="Total round-trip price over time, $262 to $342"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="141" x2="546" y2="141" class="grid" /><polyline points="58.0,141.0 302.0,141.0 546.0,141.0" class="line s-any" /><circle cx="58.0" cy="141.0" r="3" class="dot s-any" /><circle cx="302.0" cy="141.0" r="3" class="dot s-any" /><circle cx="546.0" cy="141.0" r="3" class="dot s-any" /><polyline points="58.0,16.0 302.0,16.0 546.0,16.0" class="line s-main" stroke-dasharray="6 4" /><circle cx="58.0" cy="16.0" r="3" class="dot s-main" /><circle cx="302.0" cy="16.0" r="3" class="dot s-main" /><circle cx="546.0" cy="16.0" r="3" class="dot s-main" /><text x="50" y="20" class="axis end">$342</text><text x="50" y="145" class="axis end">$262</text><text x="58" y="163" class="axis">Sep 20</text><text x="546" y="163" class="axis end">Sep 20</text></svg>
+<p class="legend"><span class="key"><svg viewBox="0 0 28 10" class="swatch" aria-hidden="true"><line x1="1" y1="5" x2="27" y2="5" class="line s-any" /></svg>Cheapest</span><span class="key"><svg viewBox="0 0 28 10" class="swatch" aria-hidden="true"><line x1="1" y1="5" x2="27" y2="5" class="line s-main" stroke-dasharray="6 4" /></svg>Main cabin</span></p>
 </section>
 
-<section class="card">
-<h2>LAX to SEA</h2>
-<p class="sub">Fri, Nov 6, 2026</p>
-<table><thead><tr>
-<th>Departs</th><th>Arrives</th><th>Duration</th><th>Price</th>
-</tr></thead><tbody>
-<tr class="best"><td>8:00 AM</td><td>10:57 AM</td><td>2h 57m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>9:12 AM</td><td>12:12 PM</td><td>3h 00m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>11:20 AM</td><td>2:12 PM</td><td>2h 52m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>12:05 PM</td><td>3:04 PM</td><td>2h 59m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>1:18 PM</td><td>4:11 PM</td><td>2h 53m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-<tr class="best"><td>3:03 PM</td><td>5:55 PM</td><td>2h 52m</td><td class="price">$264 <span class="tag">cheapest</span></td></tr>
-</tbody></table>
-<p class="sub">Checked Sep 20, 2026 at 2:23 PM PDT. Times are local to each airport.</p>
-<h3>Cheapest fare over time</h3>
-<svg class="chart" viewBox="0 0 560 170" role="img" aria-label="Cheapest fare over time, $204 to $264"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="136" x2="546" y2="136" class="grid" /><polyline points="58.0,136.0 155.6,136.0 253.2,136.0 350.8,136.0 448.4,136.0 546.0,16.0" class="line" /><circle cx="58.0" cy="136.0" r="3" class="dot" /><circle cx="155.6" cy="136.0" r="3" class="dot" /><circle cx="253.2" cy="136.0" r="3" class="dot" /><circle cx="350.8" cy="136.0" r="3" class="dot" /><circle cx="448.4" cy="136.0" r="3" class="dot" /><circle cx="546.0" cy="16.0" r="3" class="dot" /><text x="50" y="20" class="axis end">$264</text><text x="50" y="140" class="axis end">$204</text><text x="58" y="158" class="axis">Sep 20</text><text x="546" y="158" class="axis end">Sep 20</text></svg>
-</section>
-
-<section class="card">
-<h2>LAX to SEA</h2>
-<p class="sub">Sat, Nov 7, 2026</p>
-<table><thead><tr>
-<th>Departs</th><th>Arrives</th><th>Duration</th><th>Price</th>
-</tr></thead><tbody>
-<tr class="best"><td>8:00 AM</td><td>10:57 AM</td><td>2h 57m</td><td class="price">$184 <span class="tag">cheapest</span></td></tr>
-<tr><td>10:00 AM</td><td>12:52 PM</td><td>2h 52m</td><td class="price">$200</td></tr>
-<tr><td>11:20 AM</td><td>2:12 PM</td><td>2h 52m</td><td class="price">$200</td></tr>
-<tr><td>12:05 PM</td><td>3:04 PM</td><td>2h 59m</td><td class="price">$264</td></tr>
-<tr><td>1:18 PM</td><td>4:11 PM</td><td>2h 53m</td><td class="price">$264</td></tr>
-<tr><td>3:03 PM</td><td>5:55 PM</td><td>2h 52m</td><td class="price">$264</td></tr>
-<tr><td>4:35 PM</td><td>7:28 PM</td><td>2h 53m</td><td class="price">$200</td></tr>
-<tr class="best"><td>6:18 PM</td><td>9:12 PM</td><td>2h 54m</td><td class="price">$184 <span class="tag">cheapest</span></td></tr>
-</tbody></table>
-<p class="sub">Checked Sep 20, 2026 at 2:23 PM PDT. Times are local to each airport.</p>
-<h3>Cheapest fare over time</h3>
-<svg class="chart" viewBox="0 0 560 170" role="img" aria-label="Cheapest fare over time, $180 to $184"><line x1="58" y1="16" x2="546" y2="16" class="grid" /><line x1="58" y1="136" x2="546" y2="136" class="grid" /><polyline points="58.0,136.0 155.6,136.0 253.2,136.0 350.8,136.0 448.4,136.0 546.0,16.0" class="line" /><circle cx="58.0" cy="136.0" r="3" class="dot" /><circle cx="155.6" cy="136.0" r="3" class="dot" /><circle cx="253.2" cy="136.0" r="3" class="dot" /><circle cx="350.8" cy="136.0" r="3" class="dot" /><circle cx="448.4" cy="136.0" r="3" class="dot" /><circle cx="546.0" cy="16.0" r="3" class="dot" /><text x="50" y="20" class="axis end">$184</text><text x="50" y="140" class="axis end">$180</text><text x="58" y="158" class="axis">Sep 20</text><text x="546" y="158" class="axis end">Sep 20</text></svg>
-</section>
-
-<p class="note">One adult, one way, economy, nonstop on Alaska Airlines. Base fare only, before bags or seat selection. Departure and arrival times are local to each airport.</p>
+<p class="note">Base fare only, before bags or seat selection. The cheaper fare is Alaska's Saver basic economy, where your seat is assigned at check-in and you board last; the extra buys a seat you pick yourself and more room to change your mind. Checked and carry-on bag allowance is the same either way.</p>
 </div>
 </body>
 </html>
