@@ -16,13 +16,16 @@ over time.
 
 ## Setup
 
-1. **Turn on write permissions for Actions.** Go to **Settings -> Actions ->
-   General -> Workflow permissions** and select **Read and write
-   permissions**, then save.
+1. **You should not need to change workflow permissions.** The workflow asks
+   for write access itself, in its own `permissions:` block, so it can push
+   `history.csv` and `dashboard.html` back even though a new repository
+   defaults the token to read-only. This is verified: a run on a repository
+   with the default setting reported `Contents: write` and pushed normally.
 
-   Do not skip this. Without it the workflow still runs and still turns
-   green, but the step that pushes `history.csv` and `dashboard.html` back to
-   the repository fails, and nothing is ever saved.
+   If a push ever does fail with a permissions error, which can happen when
+   an organization policy forces read-only tokens, go to **Settings ->
+   Actions -> General -> Workflow permissions**, select **Read and write
+   permissions**, and save.
 
 2. **Turn on GitHub Pages** so you can send someone a link. Go to
    **Settings -> Pages**, set **Source** to **Deploy from a branch**, pick
