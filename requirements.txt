@@ -1,4 +1,6 @@
-fast-flights
+# Pinned: the code asserts this version's response shape (int prices, the
+# outbound-only segment list). An unannounced upgrade can change it.
+fast-flights==3.1.0
 
 # fast-flights 3.1.0 imports typing_extensions but does not declare it as a
 # dependency, so pip will not pull it in on its own. Without this line the

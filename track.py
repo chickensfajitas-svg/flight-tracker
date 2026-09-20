@@ -64,7 +64,7 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 def to_pacific(moment):
     """Aware UTC datetime -> (Pacific datetime, 'PST'/'PDT')."""
     local = moment.astimezone(PACIFIC)
-    return local, local.strftime("%Z") or "PT"
+    return local, local.strftime("%Z")
 
 
 def pacific_today():
@@ -116,17 +116,13 @@ def pacific_short(iso_utc):
 def hhmm(value):
     """SimpleDatetime.time -> 'HH:MM'.
 
-    Google omits zero components, so the tuple can be (8,), (None, 31) or have
-    a None in either slot. Every omitted component means zero.
+    The library expands the components Google omits before we ever see them,
+    so this is always a (hour, minute) pair. Anything else raises, which the
+    caller reports as a failed query. A loud failure beats a plausible
+    midnight fare sitting in the history as though it were real.
     """
-    parts = list(value or ())
-    hour = (parts[0] if len(parts) > 0 else None) or 0
-    minute = (parts[1] if len(parts) > 1 else None) or 0
-    try:
-        hour, minute = int(hour), int(minute)
-    except (TypeError, ValueError):
-        hour, minute = 0, 0
-    return f"{hour % 24:02d}:{minute % 60:02d}"
+    hour, minute = value
+    return f"{hour:02d}:{minute:02d}"
 
 
 def to_12h(value):
@@ -232,6 +228,17 @@ def fetch_trip(origin, destination, depart_date, return_date, exclude_basic):
     return fares, unpriced, unexpected
 
 
+def is_uniform(fares):
+    """Several departures, every one at the same price.
+
+    Real inventory varies by departure. A single price repeated across every
+    time is what a degraded or throttled response looks like, and it has been
+    observed in practice. Treat it as a failed query rather than writing it
+    down as though it were the market.
+    """
+    return len(fares) > 1 and len(set(fares.values())) == 1
+
+
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
@@ -260,7 +267,7 @@ def read_history():
             brand = (raw.get("fare_brand") or "").strip()
             if price is None or price <= 0:
                 continue
-            if not raw.get("checked_at") or brand not in ("any", "main"):
+            if parse_iso(raw.get("checked_at")) is None or brand not in ("any", "main"):
                 continue
             rows.append(
                 {
@@ -621,19 +628,14 @@ def render_page(history):
         groups.setdefault(key, []).append(row)
 
     body = ""
-    seen = set()
+    configured = set(TRIPS)
     # Configured trips first, in the order they appear in TRIPS.
-    for origin, destination, depart_date, return_date in TRIPS:
-        key = (origin, destination, depart_date, return_date)
-        if key in seen:
-            continue
-        seen.add(key)
-        body += build_card(
-            origin, destination, depart_date, return_date, groups.get(key, [])
-        )
-    # Then anything still in the history that is no longer configured.
+    for trip in TRIPS:
+        body += build_card(*trip, groups.get(trip, []))
+    # Then anything still in the history that is no longer configured, so
+    # editing TRIPS does not silently drop the history behind a card.
     for key in sorted(groups):
-        if key not in seen:
+        if key not in configured:
             body += build_card(key[0], key[1], key[2], key[3], groups[key])
 
     days = days_out_phrase(history)
@@ -741,6 +743,18 @@ def main():
 
             if not fares:
                 print(f"{tag}  empty   no fares returned{suffix}")
+                continue
+
+            if brand == "any" and is_uniform(fares):
+                flat = next(iter(fares.values()))
+                failures.append(f"{origin}-{destination} {brand}")
+                print(
+                    f"{tag}  SUSPECT all {len(fares)} departures came back at "
+                    f"{money(flat)}. That is not real inventory. Discarding "
+                    f"this result for {origin}-{destination} rather than "
+                    "recording it.",
+                    file=sys.stderr,
+                )
                 continue
 
             productive += 1
